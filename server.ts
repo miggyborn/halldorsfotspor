@@ -22,7 +22,7 @@ const ai = new GoogleGenAI({
 });
 
 // Best available Google AI Studio models in order of immediate availability
-const TEXT_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+const TEXT_MODELS = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
 
 async function generateWithBestModel(params: {
   contents: any;
@@ -196,32 +196,36 @@ STRENGE REGLER:
    - Svar ALLTID i kun 1–2 korte setninger (maks 25–35 ord totalt).
    - Kutt ut alt man ikke trenger å høre! Ingen lange utlegninger, ingen fyllord eller overflødige historiske forklaringer.
    - Si direkte hva som skjer som følge av handlingen deres.
-2. LED SPILLEREN MOT DET NESTE STEGET:
-   - Led ALLTID spilleren direkte inn i neste valg eller handling.
-   - Avslutt hver tur med et kort, ledende spørsmål som driver handlingen videre.
-   - Eksempel: «Vakten senker riflen og nikker. Nils Fuglesang hvisker at flukten planlegges. Hva vil du bidra med: utkikk eller sandspredning?»
+2. UNNGÅ DIREKTE HINT ELLER FERDIGE SVAR (LED OPP MED OMGIVELSER OG TANKER):
+   - Du skal ALDRI gi direkte hint eller ramse opp alternativer til hva man skal gjøre (IKKE si «Gjør du X, Y eller Z?», «Hva vil du: utkikk eller sandspredning?»). Å finne ut løsningen er ELEVENES EGEN OPPGAVE!
+   - Led i stedet opp mot neste steg ved å fortelle:
+     a) Hva andre fanger eller medsammensvorne gjør i leiren (f.eks. hva Nils gjør, hvordan fluktkomiteen jobber i stillhet, eller hva de andre fangene gjør).
+     b) Hva Halldor selv observerer eller kjenner en lyst eller trang til å gjøre (f.eks. en impuls, en tanke, eller spenningen i kroppen).
+   - Eksempel: «Vakten snur seg langsomt mot leirporten. Nils og et par andre fanger begynner å samle planker borte ved brakka, mens du kjenner en sterk trang til å bidra før kvelden kommer.»
 3. PRIORITER SISTE UTSAGN VED MIKROFON-INPUT:
    - Elevene snakker inn i mikrofonen og diskuterer ofte høyt mens opptaket pågår.
    - Hvis elevene sier flere ting, endrer mening eller kommer med motstridende forslag (f.eks. «Vi løper mot porten... nei vent, vi spør vakten i stedet»), skal du ALLTID PRIORITERE DET SISTE SOM BLE SAGT som deres endelige valg og handling!
-4. VAKTER BRUKER IKKE-DØDELIGE METODER (TILGIVENDE MODUS):
-   - Vakter i Stalag Luft III følger Genèvekonvensjonen. De skyter IKKE for å drepe ved første forseelse.
-   - Ved feil, snoking eller krysning av varseltråd: Bruk tilrop («Halt!»), varselskudd i bakken eller arrest i «kakebu» (isolat) i et døgn.
-   - Ikke avslutt spillet (isGameOver=false, outcome="continue"). Gi dem en advarsel, øk tillitsstigen (ladderDelta=+1), og la dem fortsette oppdraget.
-   - isGameOver=true skjer kun ved fullført flukt i Scene 6 (outcome="won") eller ved gjentatte ignoreringer av varselskudd.
+4. VED HELT EKSTREME FORSØK TAPES SPILLET (isGameOver=true, outcome="isolation_camp"):
+   - Hvis elevene forsøker ekstreme, voldelige eller selvmorderiske handlinger (f.eks. angripe vakter med makt/våpen, drepe, slå ned vakter, storme piggtråd eller port i dagslys):
+     -> SPILLET TAPES UMIDDELBART!
+     -> Sett isGameOver=true og outcome="isolation_camp".
+     -> Teksten MÅ fortelle at Halldor overmannes og sendes bort til en av de større fangeleirene på permanent isolat uten rømningsmulighet.
+   - Ved ordinære feil (løpe etter ball, snoke, mistenkelighet): Vaktene bruker ikke-dødelige midler (tilrop, varselskudd i bakken eller et døgn kakebu) og spillet fortsetter (isGameOver=false, outcome="continue", ladderDelta=+1).
+   - Fullført flukt i Scene 6: Når de når skogkanten i snøen, sett isGameOver=true og outcome="won".
 5. SOLIDARITET & TILLIT (0 til 4):
-   - Kloke valg: ladderDelta = -1 (aldri under 0).
+   - Kloke, solidariske valg: ladderDelta = -1 (aldri under 0).
    - Uforsiktige valg: ladderDelta = +1.
 6. SCENENE KORT FORTALT:
    - Scene 1: Porten og varseltråden (ball over tråden, vakten hever riflen).
-   - Scene 2: Komiteen (Nils Fuglesang spør om oppgave: utkikk, sandspredning, pass/kart).
-   - Scene 3: Mat og pakker (hemmelig sjokolade; del likt eller tie).
-   - Scene 4: Den tyske vakten (avled vakten uten vold ved tunnelsjakten).
-   - Scene 5: Kildekritikk (rykte om flytting vs. hemmelig radio).
-   - Scene 6: Natten til 25. mars 1944 (sjakten Harry i snøen, nå skogbrynet. Ved fullført rømning: outcome="won", isGameOver=true).
+   - Scene 2: Komiteen (forberedelser til flukten; falske pass, sand, utkikk).
+   - Scene 3: Mat og pakker (hemmelig sjokolade, fordeling og moral).
+   - Scene 4: Den tyske vakten (avlede mistenksom vakt ved sjakten).
+   - Scene 5: Kildekritikk (panikkrykter vs. hemmelig BBC-radio).
+   - Scene 6: Natten til 25. mars 1944 (sjakten Harry i snøen, nå skogbrynet).
 
 Returner KUN gyldig JSON:
 {
-  "text": "Kort fortellersvar (1-2 setninger som leder mot neste valg)",
+  "text": "Kort fortellersvar (1-2 setninger som leder opp med hva andre gjør og hva du har lyst til å vurdere)",
   "newScene": 1,
   "ladderDelta": 0,
   "isGameOver": false,
@@ -244,6 +248,28 @@ app.post('/api/chat', async (req, res) => {
     const cleanInput = (message || '').trim();
     if (!cleanInput) {
       return res.status(400).json({ error: 'Meldingstekst mangler' });
+    }
+
+    // Fast and reliable guardrail for extreme violent attempts
+    const lowerInput = cleanInput.toLowerCase();
+    const isExtremeAction =
+      (/\b(drep|kniv|angrip|slå|overmann|storme|skyte|kvel|massakre|våpen)\b/i.test(lowerInput) &&
+        /\b(vakt|vakten|vaktene|gjerde|gjerdet|tårn|tårnet|porten)\b/i.test(lowerInput)) ||
+      /\b(angripe vakten|drepe vakten|slå ned vakten|storme gjerdet|storme porten|angrip vakten)\b/i.test(lowerInput);
+
+    if (isExtremeAction) {
+      return res.json({
+        text: 'Det ekstreme forsøket utløser øyeblikkelig full leiralarm! Væpnede forsterkninger overmanner Halldor på stedet, og han sendes vekk til en strengere leir på permanent isolat uten rømningsmulighet.',
+        narrative:
+          'Det ekstreme forsøket utløser øyeblikkelig full leiralarm! Væpnede forsterkninger overmanner Halldor på stedet, og han sendes vekk til en strengere leir på permanent isolat uten rømningsmulighet.',
+        newScene: currentScene,
+        ladderDelta: 1,
+        isGameOver: true,
+        outcome: 'isolation_camp',
+        pedagogicalFeedback:
+          'Ekstreme, voldelige handlinger mot bevæpnede vakter var dødsdømte i Stalag Luft III og førte til overføring til Gestapo eller isolatleir. Rømning krevde disiplin, samhold og tålmodighet.',
+        modelUsed: 'rule-guardrail',
+      });
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -271,8 +297,9 @@ NYTT MIKROFON-INNSPILL FRA ELEVENE NÅ:
 
 VIKTIG REGEL FOR EVALUERING:
 1. Hvis elevene sier flere ting eller ombestemmer seg underveis i opptaket, skal du ALLTID prioritere det SISTE de sa som deres faktiske handling!
-2. Svaret ditt MÅ være kort (1–2 korte setninger, maks 35 ord). Kutt fyllstoff.
-3. Led spilleren direkte mot det neste steget eller valget.
+2. Svaret ditt MÅ være kort (1–2 korte setninger, maks 35 ord). Kutt alt fyll.
+3. IKKE gi direkte hint eller oppgi fasitsvar/konkrete valgmuligheter til neste steg. Led opp med hva andre fanger gjør og hva Halldor observerer eller har lyst til å gjøre, slik at elevene selv må ta initiativ og formulere løsningen.
+4. VED HELT EKSTREME FORSØK (f.eks. angripe vakter med vold, storme gjerdet i dagslys, hodeløse selvmordsaksjoner): Sett isGameOver=true og outcome="isolation_camp" (sendt til en av de større fangeleirene på isolat uten rømningsmulighet).
 Returner kun gyldig JSON.`;
 
     const { response, modelUsed } = await generateWithBestModel({
@@ -287,12 +314,20 @@ Returner kun gyldig JSON.`;
     const parsed = JSON.parse(jsonText);
 
     // Normalize field names
-    const text = parsed.text || parsed.narrative || 'Fortelleren observerer handlingen.';
+    let text = parsed.text || parsed.narrative || 'Fortelleren observerer handlingen.';
     const newScene = typeof parsed.newScene === 'number' ? parsed.newScene : currentScene;
     const ladderDelta = typeof parsed.ladderDelta === 'number' ? parsed.ladderDelta : 0;
-    const isGameOver = Boolean(parsed.isGameOver);
-    const outcome = parsed.outcome || 'continue';
+    let isGameOver = Boolean(parsed.isGameOver);
+    let outcome = parsed.outcome || 'continue';
     const pedagogicalFeedback = parsed.pedagogicalFeedback || '';
+
+    if (outcome === 'isolation_camp') {
+      isGameOver = true;
+      if (!text.toLowerCase().includes('isolat') && !text.toLowerCase().includes('leir')) {
+        text =
+          'Det ekstreme forsøket utløser øyeblikkelig full leiralarm. Væpnede forsterkninger overmanner Halldor på stedet, og han sendes til en strengere leir på permanent isolat uten rømningsmulighet.';
+      }
+    }
 
     res.json({
       text,

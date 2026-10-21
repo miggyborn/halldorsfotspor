@@ -3,6 +3,7 @@ import { SCENES, TRUST_LADDER_STEPS, HISTORICAL_FACTS, COMPETENCE_GOALS } from '
 import { TrustLadderLevel } from './types/game';
 import { voiceListener } from './utils/speechRecognition';
 import { speakNorwegianText, stopSpeech } from './utils/speech';
+import { FocusArchiveDisplay } from './components/FocusArchiveDisplay';
 import {
   Mic,
   MicOff,
@@ -19,6 +20,9 @@ import {
   Info,
   X,
   Loader2,
+  Map,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 interface ChatMessage {
@@ -33,40 +37,39 @@ interface ChatMessage {
 
 const SCENE_INSPIRATIONS: Record<number, string[]> = {
   1: [
-    'Dra fangen tilbake',
-    'Snakk rolig til vakten',
-    'Rop en skarp advarsel',
+    'Andre fanger fryser til i taushet',
+    'Vakten hever geværet i tårnet',
+    'Du kjenner trangen til å gripe inn',
   ],
   2: [
-    'Bli utkikk ved brakken',
-    'Spre sand i buksene',
-    'Lag falske pass og kart',
+    'Nils og komiteen forbereder flukten',
+    'Noen sprer sand, andre tegner kart',
+    'Du vil finne din plass i arbeidet',
   ],
   3: [
-    'Del all sjokolade likt',
-    'Si nei til kameraten',
-    'Spar mat til flukten',
+    'Medsammensvorne diskuterer rasjoner',
+    'Kameraten din ser lengselsfullt på pakken',
+    'Du vil bevare samholdet i brakken',
   ],
   4: [
-    'Tilby vakten kaffe',
-    'Lat som du henter ved',
-    'Lag bråk et annet sted',
+    'Tyskeren snuser ved det løse gulvet',
+    'Kameratene later som ingenting',
+    'Du vil avlede oppmerksomheten hans',
   ],
   5: [
-    'Stol på den hemmelige radioen',
-    'Be brakken beholde roen',
-    'Sjekk kilden med komiteen',
+    'Urolige rykter svirrer mellom sengene',
+    'Mottakeren i trekkspillet stilles inn',
+    'Du vil undersøke hva som er sant',
   ],
   6: [
-    'Vent på signaltauet i snøen',
-    'Ål deg lavt mot skogen',
-    'Følg Nils inn i trærne',
+    'De første rømlingene glir ut i snøen',
+    'Søkelyset sveiper like foran hullet',
+    'Du venter på rett øyeblikk mot trærne',
   ],
 };
 
 const INITIAL_PROMPT =
-  'Stalag Luft III, april 1943. En medfange løper over den hvite varseltråden etter en ball, og vakten i tårnet hever geværet.\n\n' +
-  'Stopper du fangen, snakker du til vakten, eller gjør du noe annet?';
+  'Stalag Luft III, april 1943. En medfange løper over den hvite varseltråden etter en ball. De andre fangene fryser til og holder pusten idet vakten i tårnet hever riflen. Du kjenner adrenalinet pumpe og har lyst til å avverge situasjonen før skuddet går av.';
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -91,10 +94,13 @@ export default function App() {
 
   // AI response loading
   const [isAILoading, setIsAILoading] = useState(false);
+  const [isArchiveExpanded, setIsArchiveExpanded] = useState(false);
 
   // Game over state
   const [isGameOver, setIsGameOver] = useState(false);
-  const [gameOverOutcome, setGameOverOutcome] = useState<'won' | 'death' | 'ladder_out' | null>(null);
+  const [gameOverOutcome, setGameOverOutcome] = useState<
+    'won' | 'death' | 'ladder_out' | 'isolation_camp' | null
+  >(null);
   const [pedagogicalFeedback, setPedagogicalFeedback] = useState('');
 
   // Info modal / LK20
@@ -352,36 +358,61 @@ export default function App() {
     let reply = '';
     let nextScene = currentScene;
 
+    // Check for extreme suicidal / violent attempts that immediately lose the game
+    const isExtremeAttempt =
+      lower.includes('drep') ||
+      lower.includes('angrip') ||
+      lower.includes('slå vakten') ||
+      lower.includes('storme') ||
+      lower.includes('skyte');
+
+    if (isExtremeAttempt) {
+      reply =
+        'Det ekstreme forsøket utløser øyeblikkelig full leiralarm. Væpnede forsterkninger overmanner Halldor på stedet. Han blir lagt i jern og fraktet bort til en høysikkerhetsleir på permanent isolat.';
+      setIsGameOver(true);
+      setGameOverOutcome('isolation_camp');
+      setCurrentScene(currentScene);
+      const fallbackMsg: ChatMessage = {
+        id: `ai-${Date.now()}`,
+        sender: 'forteller',
+        text: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        scene: currentScene,
+      };
+      setMessages((prev) => [...prev, fallbackMsg]);
+      return;
+    }
+
     if (currentScene === 1) {
-      if (lower.includes('dra') || lower.includes('rope') || lower.includes('stopp') || lower.includes('advar')) {
+      if (lower.includes('dra') || lower.includes('rope') || lower.includes('stopp') || lower.includes('advar') || lower.includes('holde')) {
         reply =
-          'Halldor river fangen bakover i tide, og vakten senker riflen. Like etter hvisker Nils Fuglesang at komiteen planlegger rømning. Hva vil du bidra med?';
+          'Halldor river fangen bakover i tide, og vakten senker riflen. Like etter stiller Nils Fuglesang seg ved siden av deg og myser mot brakke 104, mens du kjenner en sterk lyst til å høre hva fluktkomiteen forbereder.';
         nextScene = 2;
-      } else if (lower.includes('over tråden') || lower.includes('klatre') || lower.includes('angripe')) {
+      } else if (lower.includes('over tråden') || lower.includes('klatre')) {
         reply =
-          'Vakten brøler «Halt!» og skyter et varselskudd i bakken! Halldor overmannes og må sone et døgn i kakebu, men overlever. Nils oppsøker deg etterpå. Hva vil du hjelpe komiteen med?';
+          'Vakten brøler «Halt!» og skyter et varselskudd i bakken! Halldor overmannes og må sone et døgn i kakebu, men overlever. Nils oppsøker deg i brakken etterpå mens de andre fangene hvisker om fluktplaner.';
         setLadderLevel((prev) => Math.min(3, prev + 1) as TrustLadderLevel);
         nextScene = 2;
       } else {
         reply =
-          'Halldor roer situasjonen og vakten lar ballen ligge. Nils Fuglesang kommer bort og spør om du vil hjelpe rømningskomiteen. Hva vil du gjøre?';
+          'Halldor roer situasjonen og vakten lar ballen ligge. Nils Fuglesang stiller seg ved siden av deg og kaster et blikk mot brakkene, mens du kjenner trangen til å ta del i motstandsarbeidet.';
         nextScene = 2;
       }
     } else if (currentScene === 2) {
       reply =
-        'Nils nikker og setter deg i arbeid for komiteen. Senere ankommer Røde Kors-pakker, og en kamerat vil gjemme ekstra sjokolade. Deler du likt eller tier du?';
+        'Nils nikker og lar deg tre inn i arbeidet. Rundt deg forbereder fangene falske kart og sandlommer i stillhet. Noen dager senere ankommer nye forsyninger, og en kamerat stirrer lengselsfullt på en uåpnet boks.';
       nextScene = 3;
     } else if (currentScene === 3) {
       reply =
-        'Maten deles likt og moralen holdes oppe. Like etter snuser en tysk vakt mistenksomt utenfor brakken med tunnelsjakten. Hvordan avleder du vakten?';
+        'Maten fordeles og samholdet styrkes. Like etter ser du en tysk vakt stanse mistenksomt like utenfor brakka der tunnelsjakten ligger skjult. Kameratene dine stivner til, og du kjenner pulsen stige mens tyskeren titter inn.';
       nextScene = 4;
     } else if (currentScene === 4) {
       reply =
-        'Vakten lures bort. Likevel blir tunnelen Tom oppdaget, og et panikkrykte sprer seg mens hemmelig BBC-radio melder noe annet. Hvem stoler du på?';
+        'Tyskeren lures videre og sjakten forblir hemmelig. Samtidig sprer et rykte seg om at leiren skal tømmes, mens hemmelig BBC-radio klargjøres for kveldens sending. Du vil finne ut hva som faktisk stemmer.';
       nextScene = 5;
     } else if (currentScene === 5) {
       reply =
-        'Dere holder hodet kaldt og stoler på radioen. Natten til 25. mars ligger dere i tunnelmunningen i snøen under lyskasteren. Venter du på signaltauet eller åler du deg ut?';
+        'Dere beholder roen og stoler på faktaene. Natten til 25. mars ligger du og Nils i tunnelmunningen i den bitende snøen. Søkelyset fra vakttårnet sveiper like foran skogkanten, og du venter på det rette sekundet.';
       nextScene = 6;
     } else {
       reply =
@@ -586,17 +617,21 @@ export default function App() {
             );
           })}
 
-          {/* Live Typing / Thinking Indicator */}
+          {/* Automatic Focus Card during AI Generation to retain students' attention */}
           {isAILoading && (
-            <div className="flex flex-col items-start">
-              <div className="flex items-center gap-2 mb-1 px-1">
-                <span className="text-xs font-medium text-zinc-400">Forteller</span>
-                <span className="text-[11px] text-zinc-400 font-mono">skriver...</span>
+            <div className="flex flex-col items-start w-full my-2 animate-in fade-in duration-200">
+              <div className="flex items-center gap-2 mb-1.5 px-1">
+                <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                  Forteller former historien...
+                </span>
+                <span className="text-[11px] text-zinc-500 font-mono">Stalag Luft III</span>
               </div>
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl rounded-tl-sm p-4 text-sm text-zinc-400 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-400/80 animate-ping"></span>
-                <span className="italic">Fortelleren vurderer elevenes handling...</span>
-              </div>
+              <FocusArchiveDisplay
+                currentScene={currentScene}
+                isLoading={true}
+                statusText="Fortelleren vurderer elevenes svar og hendelsene i leiren..."
+              />
             </div>
           )}
 
@@ -606,6 +641,8 @@ export default function App() {
               className={`p-5 rounded-2xl border ${
                 gameOverOutcome === 'won'
                   ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-100'
+                  : gameOverOutcome === 'isolation_camp'
+                  ? 'bg-red-950/40 border-red-800/60 text-red-100'
                   : 'bg-zinc-900 border-zinc-800 text-zinc-200'
               } space-y-3 mt-4`}
             >
@@ -615,6 +652,11 @@ export default function App() {
                     <>
                       <Sparkles className="w-5 h-5 text-emerald-400" />
                       <span>Gratulerer! Halldor kom seg gjennom tunnelen.</span>
+                    </>
+                  ) : gameOverOutcome === 'isolation_camp' ? (
+                    <>
+                      <Shield className="w-5 h-5 text-red-400" />
+                      <span>Overført til høysikkerhetsleir på isolat</span>
                     </>
                   ) : (
                     <>
@@ -631,6 +673,8 @@ export default function App() {
               <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
                 {gameOverOutcome === 'won'
                   ? 'I den virkelige historien var Halldor Espelid en av 76 offiserer som rømte gjennom tunnelen Harry natten til 25. mars 1944. 73 ble tatt til fange igjen, og 50 av dem – inkludert Halldor (23 år) og Nils Fuglesang – ble skutt av Gestapo på Hitlers ordre, i strid med Genèvekonvensjonen.'
+                  : gameOverOutcome === 'isolation_camp'
+                  ? 'Det ekstreme forsøket førte til full leiralarm. Halldor ble overmannet på stedet, lagt i jern og umiddelbart overført vekk fra Stalag Luft III til en av de større fangeleirene på permanent isolat (som Oflag IV-C Colditz eller Gestapo-fengsel) uten kontakt med medfanger og uten rømningsmulighet.'
                   : 'Fangeleiren Stalag Luft III krevde disiplin, tålmodighet og sterkt samhold. Hvert minste feiltrinn kunne få fatale konsekvenser i møte med leirvaktene.'}
               </p>
 
@@ -666,6 +710,39 @@ export default function App() {
         {/* Voice-Only Input Console */}
         {!isGameOver && (
           <div className="sticky bottom-0 bg-zinc-950/95 backdrop-blur-md pt-2 pb-3 border-t border-zinc-800/80 space-y-3">
+            {/* Expandable Historical Archive Drawer between turns */}
+            {!isAILoading && (
+              <div className="max-w-2xl mx-auto w-full transition-all duration-200">
+                <button
+                  type="button"
+                  onClick={() => setIsArchiveExpanded(!isArchiveExpanded)}
+                  className="w-full py-1.5 px-3 rounded-xl bg-zinc-900/80 hover:bg-zinc-800/90 border border-zinc-800 text-xs flex items-center justify-between text-zinc-300 hover:text-amber-300 transition-colors cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2">
+                    <Map className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+                    <span className="font-medium text-[11px] sm:text-xs">
+                      {isArchiveExpanded ? 'Skjul leirarkiv' : 'Historisk kildearkiv: Kart & dokumenter'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-zinc-400 text-[11px]">
+                    <span className="hidden sm:inline font-mono text-[10px] text-zinc-500">
+                      {isArchiveExpanded ? 'Trykk for å lukke' : 'Studér kilder'}
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                        isArchiveExpanded ? 'rotate-180 text-amber-400' : ''
+                      }`}
+                    />
+                  </div>
+                </button>
+
+                {isArchiveExpanded && (
+                  <div className="mt-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <FocusArchiveDisplay currentScene={currentScene} isLoading={false} />
+                  </div>
+                )}
+              </div>
+            )}
             {/* Voice Notice Toast / Error */}
             {voiceNotice && !isListening && !isTranscribing && (
               <div className="max-w-md mx-auto bg-zinc-900 border border-amber-500/40 rounded-xl px-3.5 py-2 text-xs text-amber-300 flex items-center justify-between">
@@ -680,10 +757,10 @@ export default function App() {
               </div>
             )}
 
-            {/* Subtle Inspiration Chips (shown when not listening) */}
+            {/* Subtle Situational Atmosphere Chips (shown when not listening) */}
             {!isListening && !isTranscribing && SCENE_INSPIRATIONS[currentScene] && (
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs no-scrollbar justify-center">
-                <span className="text-[11px] text-zinc-400 shrink-0 font-mono">Tips å si:</span>
+                <span className="text-[11px] text-zinc-400 shrink-0 font-mono">I leiren nå:</span>
                 {SCENE_INSPIRATIONS[currentScene].map((insp, idx) => (
                   <span
                     key={idx}
