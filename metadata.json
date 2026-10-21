@@ -1,0 +1,8 @@
+{
+  "name": "I Halldors fotspor",
+  "description": "Pedagogisk spillveileder, interaktiv simulator og KI-promptgenerator for historielæring i 9.–10. trinn om Halldor Espelid i Stalag Luft III.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
