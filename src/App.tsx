@@ -23,7 +23,11 @@ import {
   Map,
   ChevronDown,
   ChevronUp,
+  Lightbulb,
+  Compass,
 } from 'lucide-react';
+
+export type GameMode = 'guided' | 'open';
 
 interface ChatMessage {
   id: string;
@@ -35,43 +39,47 @@ interface ChatMessage {
   source?: 'text' | 'voice';
 }
 
-const SCENE_INSPIRATIONS: Record<number, string[]> = {
+const GUIDED_INSPIRATIONS: Record<number, string[]> = {
   1: [
-    'Andre fanger fryser til i taushet',
-    'Vakten hever geværet i tårnet',
-    'Du kjenner trangen til å gripe inn',
+    'Dra fangen bak tråden',
+    'Rop en advarsel til ham',
+    'Vink til vakten og forklar',
   ],
   2: [
-    'Nils og komiteen forbereder flukten',
-    'Noen sprer sand, andre tegner kart',
-    'Du vil finne din plass i arbeidet',
+    'Bli utkikk ved brakken',
+    'Hjelp til med å spre sand',
+    'Spør Nils om karttegning',
   ],
   3: [
-    'Medsammensvorne diskuterer rasjoner',
-    'Kameraten din ser lengselsfullt på pakken',
-    'Du vil bevare samholdet i brakken',
+    'Del sjokoladen med brakken',
+    'Spar rasjonen til flukten',
+    'Bytt mot varme ullsokker',
   ],
   4: [
-    'Tyskeren snuser ved det løse gulvet',
-    'Kameratene later som ingenting',
-    'Du vil avlede oppmerksomheten hans',
+    'Velt en kaffekjele for å avlede',
+    'Start en opphetet diskusjon',
+    'Få fangene til å synge høyt',
   ],
   5: [
-    'Urolige rykter svirrer mellom sengene',
-    'Mottakeren i trekkspillet stilles inn',
-    'Du vil undersøke hva som er sant',
+    'Lytt til hemmelig BBC-radio',
+    'Spør en erfaren fange om råd',
+    'Avvis ryktet som falskt',
   ],
   6: [
-    'De første rømlingene glir ut i snøen',
-    'Søkelyset sveiper like foran hullet',
-    'Du venter på rett øyeblikk mot trærne',
+    'Vent til lyskasteren passerer',
+    'Kryp i snøen mot nærmeste tre',
+    'Hold pusten til vakten snur seg',
   ],
 };
 
-const INITIAL_PROMPT =
+const INITIAL_PROMPT_GUIDED =
+  'Stalag Luft III, april 1943. En medfange løper over den hvite varseltråden etter en ball. Vakten i tårnet hever riflen. Vil du gripe tak i fangen og dra ham tilbake, rope en advarsel, eller gjøre noe annet?';
+
+const INITIAL_PROMPT_OPEN =
   'Stalag Luft III, april 1943. En medfange løper over den hvite varseltråden etter en ball. De andre fangene fryser til og holder pusten idet vakten i tårnet hever riflen. Du kjenner adrenalinet pumpe og har lyst til å avverge situasjonen før skuddet går av.';
 
 export default function App() {
+  const [gameMode, setGameMode] = useState<GameMode>('guided');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState('');
   const [currentScene, setCurrentScene] = useState(1);
@@ -121,7 +129,7 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isAILoading]);
 
-  const resetConversation = () => {
+  const resetConversation = (modeOverride?: GameMode) => {
     stopSpeech();
     voiceListener.cancel();
     setIsListening(false);
@@ -130,20 +138,43 @@ export default function App() {
     setInterimSpeechText('');
     setVoiceNotice(null);
     setIsAILoading(false);
+    setIsArchiveExpanded(false);
     setIsGameOver(false);
     setGameOverOutcome(null);
     setCurrentScene(1);
     setLadderLevel(0);
     setPedagogicalFeedback('');
 
+    const activeMode = modeOverride || gameMode;
+    const initialText = activeMode === 'guided' ? INITIAL_PROMPT_GUIDED : INITIAL_PROMPT_OPEN;
+
     const initialMsg: ChatMessage = {
       id: 'init-1',
       sender: 'forteller',
-      text: INITIAL_PROMPT,
+      text: initialText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       scene: 1,
     };
     setMessages([initialMsg]);
+  };
+
+  const handleToggleMode = (newMode: GameMode) => {
+    if (newMode === gameMode) return;
+    setGameMode(newMode);
+
+    // If game has just started with only the initial prompt, seamlessly update the opening
+    if (messages.length <= 1) {
+      const initialText = newMode === 'guided' ? INITIAL_PROMPT_GUIDED : INITIAL_PROMPT_OPEN;
+      setMessages([
+        {
+          id: 'init-1',
+          sender: 'forteller',
+          text: initialText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          scene: 1,
+        },
+      ]);
+    }
   };
 
   // Stop recording and transcribe Norwegian audio with Gemini
@@ -301,6 +332,7 @@ export default function App() {
           currentScene,
           ladderLevel,
           studentNames,
+          gameMode,
         }),
       });
 
@@ -343,11 +375,16 @@ export default function App() {
       };
 
       setMessages((prev) => [...prev, aiMsg]);
+      setIsArchiveExpanded(false);
+
+      // Play audio narration aloud when AI is done thinking and outputs message
+      handlePlayAudio(aiMsg.id, narrativeText);
     } catch (err) {
       console.warn('Direct chat endpoint error, using local fallback:', err);
       handleFallbackTurn(rawText);
     } finally {
       setIsAILoading(false);
+      setIsArchiveExpanded(false);
       inputRef.current?.focus();
     }
   };
@@ -383,36 +420,45 @@ export default function App() {
       return;
     }
 
+    const isGuided = gameMode === 'guided';
+
     if (currentScene === 1) {
       if (lower.includes('dra') || lower.includes('rope') || lower.includes('stopp') || lower.includes('advar') || lower.includes('holde')) {
-        reply =
-          'Halldor river fangen bakover i tide, og vakten senker riflen. Like etter stiller Nils Fuglesang seg ved siden av deg og myser mot brakke 104, mens du kjenner en sterk lyst til å høre hva fluktkomiteen forbereder.';
+        reply = isGuided
+          ? 'Halldor river fangen bakover i tide, og vakten senker riflen. Nils Fuglesang stiller seg ved siden av deg. Vil du tilby deg som utkikk, hjelpe til med sanden, eller spørre Nils om komiteen?'
+          : 'Halldor river fangen bakover i tide, og vakten senker riflen. Like etter stiller Nils Fuglesang seg ved siden av deg og myser mot brakke 104, mens du kjenner en sterk lyst til å høre hva fluktkomiteen forbereder.';
         nextScene = 2;
       } else if (lower.includes('over tråden') || lower.includes('klatre')) {
-        reply =
-          'Vakten brøler «Halt!» og skyter et varselskudd i bakken! Halldor overmannes og må sone et døgn i kakebu, men overlever. Nils oppsøker deg i brakken etterpå mens de andre fangene hvisker om fluktplaner.';
+        reply = isGuided
+          ? 'Vakten brøler «Halt!» og skyter et varselskudd i bakken! Halldor soner et døgn i kakebu, men overlever. Vil du nå oppsøke Nils for å hjelpe til med kart, eller ta utkikk ved brakken?'
+          : 'Vakten brøler «Halt!» og skyter et varselskudd i bakken! Halldor overmannes og må sone et døgn i kakebu, men overlever. Nils oppsøker deg i brakken etterpå mens de andre fangene hvisker om fluktplaner.';
         setLadderLevel((prev) => Math.min(3, prev + 1) as TrustLadderLevel);
         nextScene = 2;
       } else {
-        reply =
-          'Halldor roer situasjonen og vakten lar ballen ligge. Nils Fuglesang stiller seg ved siden av deg og kaster et blikk mot brakkene, mens du kjenner trangen til å ta del i motstandsarbeidet.';
+        reply = isGuided
+          ? 'Halldor roer situasjonen og vakten lar ballen ligge. Nils stiller seg ved siden av deg. Vil du spørre ham om forberedelsene, eller tilby deg å spre sand i luftegården?'
+          : 'Halldor roer situasjonen og vakten lar ballen ligge. Nils Fuglesang stiller seg ved siden av deg og kaster et blikk mot brakkene, mens du kjenner trangen til å ta del i motstandsarbeidet.';
         nextScene = 2;
       }
     } else if (currentScene === 2) {
-      reply =
-        'Nils nikker og lar deg tre inn i arbeidet. Rundt deg forbereder fangene falske kart og sandlommer i stillhet. Noen dager senere ankommer nye forsyninger, og en kamerat stirrer lengselsfullt på en uåpnet boks.';
+      reply = isGuided
+        ? 'Nils nikker og lar deg tre inn i arbeidet. En ny forsyning med pakker ankommer brakken. Vil du dele sjokoladen med de andre, spare den til selve flukten, eller bytte den bort?'
+        : 'Nils nikker og lar deg tre inn i arbeidet. Rundt deg forbereder fangene falske kart og sandlommer i stillhet. Noen dager senere ankommer nye forsyninger, og en kamerat stirrer lengselsfullt på en uåpnet boks.';
       nextScene = 3;
     } else if (currentScene === 3) {
-      reply =
-        'Maten fordeles og samholdet styrkes. Like etter ser du en tysk vakt stanse mistenksomt like utenfor brakka der tunnelsjakten ligger skjult. Kameratene dine stivner til, og du kjenner pulsen stige mens tyskeren titter inn.';
+      reply = isGuided
+        ? 'Maten fordeles og samholdet styrkes. Plutselig stopper en tysk vakt mistenksomt like utenfor sjakten. Vil du velte en kjele for å avlede ham, starte en diskusjon, eller late som ingenting?'
+        : 'Maten fordeles og samholdet styrkes. Like etter ser du en tysk vakt stanse mistenksomt like utenfor brakka der tunnelsjakten ligger skjult. Kameratene dine stivner til, og du kjenner pulsen stige mens tyskeren titter inn.';
       nextScene = 4;
     } else if (currentScene === 4) {
-      reply =
-        'Tyskeren lures videre og sjakten forblir hemmelig. Samtidig sprer et rykte seg om at leiren skal tømmes, mens hemmelig BBC-radio klargjøres for kveldens sending. Du vil finne ut hva som faktisk stemmer.';
+      reply = isGuided
+        ? 'Tyskeren overbevises og går videre. Samtidig sprer et urolig rykte seg om at leiren skal tømmes. Vil du sjekke hemmelig BBC-radio, snakke med en erfaren offiser, eller avvise ryktet?'
+        : 'Tyskeren lures videre og sjakten forblir hemmelig. Samtidig sprer et rykte seg om at leiren skal tømmes, mens hemmelig BBC-radio klargjøres for kveldens sending. Du vil finne ut hva som faktisk stemmer.';
       nextScene = 5;
     } else if (currentScene === 5) {
-      reply =
-        'Dere beholder roen og stoler på faktaene. Natten til 25. mars ligger du og Nils i tunnelmunningen i den bitende snøen. Søkelyset fra vakttårnet sveiper like foran skogkanten, og du venter på det rette sekundet.';
+      reply = isGuided
+        ? 'Dere beholder roen og stoler på fakta. Natten til 25. mars ligger dere klare i sjakten Harry i snøen. Vil du vente til lyskasteren passerer, åle deg mot trærne, eller teste vakten med snø?'
+        : 'Dere beholder roen og stoler på faktaene. Natten til 25. mars ligger du og Nils i tunnelmunningen i den bitende snøen. Søkelyset fra vakttårnet sveiper like foran skogkanten, og du venter på det rette sekundet.';
       nextScene = 6;
     } else {
       reply =
@@ -430,6 +476,8 @@ export default function App() {
       scene: nextScene,
     };
     setMessages((prev) => [...prev, fallbackMsg]);
+    setIsArchiveExpanded(false);
+    handlePlayAudio(fallbackMsg.id, reply);
   };
 
   const handleCopyTranscript = () => {
@@ -500,7 +548,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={resetConversation}
+              onClick={() => resetConversation()}
               className="p-2 text-zinc-400 hover:text-amber-400 hover:bg-zinc-800/60 rounded-lg transition-colors cursor-pointer text-xs flex items-center gap-1.5 border border-transparent hover:border-zinc-700"
               title="Start ny samtale fra begynnelsen"
             >
@@ -515,8 +563,8 @@ export default function App() {
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-between">
         {/* Messages Feed */}
         <div className="space-y-4 pb-6">
-          {/* Player Names Header Pill */}
-          <div className="flex items-center justify-between text-xs text-zinc-400 px-1 py-1">
+          {/* Player Names and Mode Switcher Header Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400 px-1 py-1.5 border-b border-zinc-800/60 pb-2">
             <div className="flex items-center gap-1.5">
               <span>Spillere:</span>
               {isEditingNames ? (
@@ -552,9 +600,38 @@ export default function App() {
               )}
             </div>
 
-            <span className="font-mono text-[11px] text-zinc-400">
-              Google AI Studio • Gemini 3.8 Flash
-            </span>
+            {/* 2 Spillmoduser: Veiledet (med hint) og Åpne valg (selvstendig) */}
+            <div className="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-xl border border-zinc-800">
+              <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 px-1.5 hidden md:inline">
+                Modus:
+              </span>
+              <button
+                type="button"
+                onClick={() => handleToggleMode('guided')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                  gameMode === 'guided'
+                    ? 'bg-amber-400 text-zinc-950 shadow-sm font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                }`}
+                title="Veiledet modus: Enklere for de som ikke har fulgt nok med i timen. Gir hint over mikrofonen og alternativer som leder videre i historien."
+              >
+                <Lightbulb className="w-3.5 h-3.5" />
+                <span>Veiledet (med hint)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleMode('open')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                  gameMode === 'open'
+                    ? 'bg-amber-400 text-zinc-950 shadow-sm font-semibold'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                }`}
+                title="Åpne valg: Selvstendig utfordring. Ingen tips over mikrofonen – dere velger hva dere gjør med de rådende omstendighetene."
+              >
+                <Compass className="w-3.5 h-3.5" />
+                <span>Åpne valg (selvstendig)</span>
+              </button>
+            </div>
           </div>
 
           {/* Conversation Bubbles */}
@@ -617,21 +694,19 @@ export default function App() {
             );
           })}
 
-          {/* Automatic Focus Card during AI Generation to retain students' attention */}
+          {/* Live Typing / Thinking Indicator in message feed */}
           {isAILoading && (
-            <div className="flex flex-col items-start w-full my-2 animate-in fade-in duration-200">
-              <div className="flex items-center gap-2 mb-1.5 px-1">
-                <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                  Forteller former historien...
-                </span>
-                <span className="text-[11px] text-zinc-500 font-mono">Stalag Luft III</span>
+            <div className="flex flex-col items-start animate-in fade-in duration-150">
+              <div className="flex items-center gap-2 mb-1 px-1">
+                <span className="text-xs font-medium text-amber-400">Forteller</span>
+                <span className="text-[11px] text-zinc-500 font-mono">vurderer situasjonen...</span>
               </div>
-              <FocusArchiveDisplay
-                currentScene={currentScene}
-                isLoading={true}
-                statusText="Fortelleren vurderer elevenes svar og hendelsene i leiren..."
-              />
+              <div className="bg-zinc-900 border border-amber-500/30 rounded-2xl rounded-tl-sm px-4 py-3 text-xs sm:text-sm text-zinc-300 flex items-center gap-2.5 shadow-md">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                <span className="italic text-zinc-300">
+                  Fortelleren vurderer elevenes handling...
+                </span>
+              </div>
             </div>
           )}
 
@@ -687,7 +762,7 @@ export default function App() {
 
               <div className="pt-2 flex flex-wrap gap-2">
                 <button
-                  onClick={resetConversation}
+                  onClick={() => resetConversation()}
                   className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold rounded-xl text-xs cursor-pointer transition-colors flex items-center gap-1.5"
                 >
                   <RotateCcw className="w-4 h-4" />
@@ -710,39 +785,60 @@ export default function App() {
         {/* Voice-Only Input Console */}
         {!isGameOver && (
           <div className="sticky bottom-0 bg-zinc-950/95 backdrop-blur-md pt-2 pb-3 border-t border-zinc-800/80 space-y-3">
-            {/* Expandable Historical Archive Drawer between turns */}
-            {!isAILoading && (
-              <div className="max-w-2xl mx-auto w-full transition-all duration-200">
-                <button
-                  type="button"
-                  onClick={() => setIsArchiveExpanded(!isArchiveExpanded)}
-                  className="w-full py-1.5 px-3 rounded-xl bg-zinc-900/80 hover:bg-zinc-800/90 border border-zinc-800 text-xs flex items-center justify-between text-zinc-300 hover:text-amber-300 transition-colors cursor-pointer group"
-                >
-                  <div className="flex items-center gap-2">
-                    <Map className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
-                    <span className="font-medium text-[11px] sm:text-xs">
-                      {isArchiveExpanded ? 'Skjul leirarkiv' : 'Historisk kildearkiv: Kart & dokumenter'}
+            {/* Infokort: Lagt ned ved start, kommer opp når KI tenker, går ned igjen når ferdig */}
+            <div className="max-w-2xl mx-auto w-full transition-all duration-300">
+              <button
+                type="button"
+                onClick={() => setIsArchiveExpanded(!isArchiveExpanded)}
+                className={`w-full py-1.5 px-3 rounded-xl border text-xs flex items-center justify-between transition-all cursor-pointer group ${
+                  isAILoading || isArchiveExpanded
+                    ? 'bg-zinc-900 border-amber-500/50 text-amber-200 shadow-lg'
+                    : 'bg-zinc-900/80 hover:bg-zinc-800/90 border-zinc-800 text-zinc-300 hover:text-amber-300'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Map className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+                  <span className="font-medium text-[11px] sm:text-xs">
+                    Historisk leirarkiv: Kart & dokumenter
+                  </span>
+                  {isAILoading ? (
+                    <span className="text-[10px] text-amber-400 font-mono flex items-center gap-1 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                      KI tenker – kartet er oppe
                     </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-zinc-400 text-[11px]">
-                    <span className="hidden sm:inline font-mono text-[10px] text-zinc-500">
-                      {isArchiveExpanded ? 'Trykk for å lukke' : 'Studér kilder'}
+                  ) : (
+                    <span className="text-[10px] text-zinc-500 font-mono hidden sm:inline">
+                      {isArchiveExpanded ? 'Åpent' : 'Lagt ned'}
                     </span>
-                    <ChevronDown
-                      className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                        isArchiveExpanded ? 'rotate-180 text-amber-400' : ''
-                      }`}
-                    />
-                  </div>
-                </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 text-zinc-400 text-[11px]">
+                  <span className="hidden sm:inline font-mono text-[10px] text-zinc-500">
+                    {isAILoading
+                      ? 'Går ned automatisk når svaret leses opp'
+                      : isArchiveExpanded
+                      ? 'Trykk for å legge ned'
+                      : 'Trykk for å åpne'}
+                  </span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-300 ${
+                      isAILoading || isArchiveExpanded ? 'rotate-180 text-amber-400' : ''
+                    }`}
+                  />
+                </div>
+              </button>
 
-                {isArchiveExpanded && (
-                  <div className="mt-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <FocusArchiveDisplay currentScene={currentScene} isLoading={false} />
-                  </div>
-                )}
+              {/* Infokort-innhold som kommer opp under tenking eller når eleven åpner det */}
+              <div
+                className={`transition-all duration-300 ease-in-out overflow-hidden ${
+                  isAILoading || isArchiveExpanded
+                    ? 'max-h-[600px] opacity-100 mt-2 pointer-events-auto'
+                    : 'max-h-0 opacity-0 mt-0 pointer-events-none'
+                }`}
+              >
+                <FocusArchiveDisplay currentScene={currentScene} isLoading={isAILoading} />
               </div>
-            )}
+            </div>
             {/* Voice Notice Toast / Error */}
             {voiceNotice && !isListening && !isTranscribing && (
               <div className="max-w-md mx-auto bg-zinc-900 border border-amber-500/40 rounded-xl px-3.5 py-2 text-xs text-amber-300 flex items-center justify-between">
@@ -757,14 +853,17 @@ export default function App() {
               </div>
             )}
 
-            {/* Subtle Situational Atmosphere Chips (shown when not listening) */}
-            {!isListening && !isTranscribing && SCENE_INSPIRATIONS[currentScene] && (
+            {/* Tips over mikrofonknappen KUN i Veiledet modus (fjernet for åpne valg) */}
+            {!isListening && !isTranscribing && gameMode === 'guided' && GUIDED_INSPIRATIONS[currentScene] && (
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs no-scrollbar justify-center">
-                <span className="text-[11px] text-zinc-400 shrink-0 font-mono">I leiren nå:</span>
-                {SCENE_INSPIRATIONS[currentScene].map((insp, idx) => (
+                <span className="text-[11px] text-zinc-400 shrink-0 font-mono flex items-center gap-1">
+                  <Lightbulb className="w-3 h-3 text-amber-400" />
+                  <span>Tips å si:</span>
+                </span>
+                {GUIDED_INSPIRATIONS[currentScene].map((insp, idx) => (
                   <span
                     key={idx}
-                    className="shrink-0 px-2.5 py-1 rounded-full bg-zinc-900 text-zinc-300 border border-zinc-800 text-xs select-none"
+                    className="shrink-0 px-2.5 py-1 rounded-full text-xs select-none border transition-colors bg-amber-950/40 text-amber-200 border-amber-800/60"
                   >
                     «{insp}»
                   </span>
